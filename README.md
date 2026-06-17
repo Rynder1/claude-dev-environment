@@ -8,6 +8,9 @@ The point: containers are disposable, your Claude **sessions and login are not**
 `~/.claude` (transcripts + auth + config) lives on a named volume that survives container
 recreation, so you can blow away and rebuild a broken environment and lose nothing.
 
+> **Just want to get set up?** Follow **[SETUP.md](SETUP.md)** — a copy/paste, top-to-bottom
+> guide (machine setup once, then per-repo). This README is the design reference behind it.
+
 ## How it fits together
 
 ```
@@ -83,11 +86,29 @@ scripts/new-env.sh --repo /home/you/code/alpha
 scripts/new-env.sh --repo /home/you/code/beta --port 2201
 ```
 
-`new-env.sh` picks the next free port (from 2200), authorizes your SSH public key, generates
+`new-env.sh` picks the next free port (from 2200), authorizes your SSH keys, generates
 `envs/<name>.compose.yml`, and starts the container. It prints the exact SSH details to paste
-into the desktop app.
+into the desktop app. Environments are named `SSH-<RepoName>` so they sort together and don't
+collide with your local (non-SSH) projects.
 
-Flags: `--name`, `--port`, `--pubkey <file>`, `--image <tag>`, `--firewall` (egress lockdown — see Safety).
+By default it authorizes **both** your WSL key (for `ssh` from inside WSL) and your **Windows**
+key (auto-detected from your Windows user profile — this is the key the desktop app actually
+connects with), so the connection just works.
+
+Flags: `--name`, `--port`, `--pubkey <file>`, `--win-key <file>`, `--image <tag>`,
+`--firewall` (egress lockdown — see Safety).
+
+### Enable git inside the container
+
+```bash
+scripts/setup-git-auth.sh SSH-<name>
+```
+
+Stores a GitHub token in the env's volume credential store (mode 600, never in the image or
+git), points git at it, and sets your commit identity. By default it pulls the token from your
+GitHub CLI login; use `--token-cmd`/`--stdin` for a Personal Access Token, and `--name`/`--email`
+to override the commit identity. Because the credential lives on the volume and `~/.gitconfig`
+is symlinked there, git auth survives `rebuild.sh`.
 
 ## STEP 4 — connect from the desktop app
 
@@ -95,9 +116,14 @@ For each environment, add an SSH connection using the details `new-env.sh` print
 
 - **SSH Host**: `node@127.0.0.1`
 - **SSH Port**: the port shown (e.g. `2200`)
-- **Identity File**: your private key (e.g. `~/.ssh/id_ed25519`)
+- **Identity File**: your **Windows** private key, e.g. `C:\Users\<you>\.ssh\id_ed25519`
+  (the desktop app uses Windows `ssh.exe` — `new-env.sh` prints the exact path)
 
-The repo is mounted at `/workspaces/<name>` inside the container. Start/resume sessions there.
+First time only, accept the host fingerprint from PowerShell: `ssh -p <port> node@127.0.0.1`
+(type `yes`; you should log in with no password). A password prompt means you used the wrong
+port — the containers are key-only.
+
+The repo is mounted at `/workspaces/SSH-<name>` inside the container. Start/resume sessions there.
 
 ## See what's running
 
@@ -195,7 +221,8 @@ scripts/
   setup-wsl.sh               one-time: install Docker Engine in WSL, make an SSH key
   doctor.sh                  pre-flight checks (docker, group, ssh key, repo path, firewall)
   build.sh                   build/tag the base image
-  new-env.sh                 stamp out + start a container for a repo (--firewall optional)
+  new-env.sh                 stamp out + start a container for a repo (authorizes WSL + Windows keys)
+  setup-git-auth.sh          provision git creds + identity into a container's volume (token via gh/PAT)
   list-envs.sh               show all environments: status, SSH port, firewall, mounted repo
   rebuild.sh                 force-recreate one container, keep its volume (+ firewall overlay)
   entrypoint.sh              seeds settings, installs authorized_keys, runs firewall, runs sshd

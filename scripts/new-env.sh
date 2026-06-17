@@ -11,19 +11,26 @@ ENV_NAME=""
 REPO_PATH=""
 SSH_PORT=""
 PUBKEY=""
+WIN_KEY=""
 IMAGE_TAG="claude-dev:latest"
 FIREWALL=0
 
 usage() {
 	cat <<'EOF'
-Usage: new-env.sh --repo <path> [--name <name>] [--port <port>] [--pubkey <path>] [--image <tag>]
+Usage: new-env.sh --repo <path> [--name <name>] [--port <port>] [--pubkey <path>]
+                  [--win-key <path>] [--image <tag>] [--firewall]
 
-  --repo    Absolute path (inside WSL) to the repository to mount. Required.
-  --name    Environment name (default: basename of --repo).
-  --port    Host SSH port to expose (default: auto, starting at 2200).
-  --pubkey  SSH public key to authorize (default: ~/.ssh/id_ed25519.pub then id_rsa.pub).
-  --image   Base image tag (default: claude-dev:latest).
+  --repo     Absolute path (inside WSL) to the repository to mount. Required.
+  --name     Environment name (default: basename of --repo).
+  --port     Host SSH port to expose (default: auto, starting at 2200).
+  --pubkey   Extra SSH public key to authorize (added to the auto-detected ones).
+  --win-key  Windows SSH public key to authorize (default: auto-detected from the
+             Windows user profile - this is the key the desktop app connects with).
+  --image    Base image tag (default: claude-dev:latest).
   --firewall Lock down egress to an allowlist (opt-in profile for unattended runs).
+
+By default this authorizes BOTH your WSL key (for `ssh` from inside WSL) and your
+Windows key (what the Claude desktop app presents), so the connection just works.
 EOF
 }
 
@@ -33,6 +40,7 @@ while [ $# -gt 0 ]; do
 		--name) ENV_NAME="${2:-}"; shift 2;;
 		--port) SSH_PORT="${2:-}"; shift 2;;
 		--pubkey) PUBKEY="${2:-}"; shift 2;;
+		--win-key) WIN_KEY="${2:-}"; shift 2;;
 		--image) IMAGE_TAG="${2:-}"; shift 2;;
 		--firewall) FIREWALL=1; shift;;
 		-h|--help) usage; exit 0;;
@@ -60,13 +68,47 @@ PROJECT_NAME="$(printf '%s' "$ENV_NAME" | tr '[:upper:]' '[:lower:]')"
 
 mkdir -p "$ENVS_DIR" "$SECRETS_DIR"
 
-if [ -z "$PUBKEY" ]; then
-	for cand in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub"; do
-		[ -f "$cand" ] && PUBKEY="$cand" && break
-	done
+# --- Collect public keys to authorize -------------------------------------------------
+# The Claude desktop app runs on Windows and connects with the *Windows* SSH key, while
+# `ssh` from inside WSL uses the *WSL* key. We authorize whatever we can find of both, so
+# the connection works no matter where you connect from. Keys are de-duplicated by content.
+PUBKEYS=()
+WIN_KEY_DETECTED=""   # remembered so we can print the right Identity File hint at the end
+add_key() { if [ -n "${1:-}" ] && [ -f "$1" ]; then PUBKEYS+=("$1"); fi; }
+
+# 1. WSL key (for `ssh` from within WSL / scripts)
+add_key "$HOME/.ssh/id_ed25519.pub"
+add_key "$HOME/.ssh/id_rsa.pub"
+
+# 2. Windows key (what the desktop app presents) - explicit flag, else auto-detect
+if [ -n "$WIN_KEY" ]; then
+	add_key "$WIN_KEY"; WIN_KEY_DETECTED="$WIN_KEY"
+else
+	win_profile=""
+	if command -v cmd.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
+		wp="$( (cd /mnt/c 2>/dev/null && cmd.exe /c 'echo %USERPROFILE%') 2>/dev/null | tr -d '\r\n')"
+		[ -n "$wp" ] && win_profile="$(wslpath "$wp" 2>/dev/null || true)"
+	fi
+	if [ -n "$win_profile" ] && [ -d "$win_profile/.ssh" ]; then
+		for c in "$win_profile/.ssh/id_ed25519.pub" "$win_profile/.ssh/id_rsa.pub"; do
+			[ -f "$c" ] && { add_key "$c"; [ -z "$WIN_KEY_DETECTED" ] && WIN_KEY_DETECTED="$c"; }
+		done
+	else
+		# Fallback: scan real Windows user profiles (skip system ones)
+		for d in /mnt/c/Users/*/.ssh; do
+			case "$d" in */Public/.ssh|*/Default/.ssh|*/"Default User"/.ssh|*/"All Users"/.ssh) continue;; esac
+			for c in "$d/id_ed25519.pub" "$d/id_rsa.pub"; do
+				[ -f "$c" ] && { add_key "$c"; [ -z "$WIN_KEY_DETECTED" ] && WIN_KEY_DETECTED="$c"; }
+			done
+		done
+	fi
 fi
-[ -n "$PUBKEY" ] && [ -f "$PUBKEY" ] || {
-	echo "Error: no SSH public key found. Pass --pubkey <file> or run: ssh-keygen -t ed25519" >&2
+
+# 3. Any extra key the user passed explicitly
+add_key "$PUBKEY"
+
+[ "${#PUBKEYS[@]}" -gt 0 ] || {
+	echo "Error: no SSH public key found. Pass --pubkey <file>/--win-key <file>, or run: ssh-keygen -t ed25519" >&2
 	exit 1
 }
 
@@ -80,8 +122,20 @@ if [ -z "$SSH_PORT" ]; then
 fi
 
 AUTHKEYS_PATH="$SECRETS_DIR/$ENV_NAME.authorized_keys"
-cp "$PUBKEY" "$AUTHKEYS_PATH"
+: > "$AUTHKEYS_PATH"
 chmod 600 "$AUTHKEYS_PATH"
+declare -A _seen_keys=()
+AUTH_COUNT=0
+for k in "${PUBKEYS[@]}"; do
+	line="$(tr -d '\r' < "$k")"
+	blob="$(awk '{print $2}' <<<"$line")"   # de-dupe on the key material, not the path
+	[ -n "$blob" ] || continue
+	[ -n "${_seen_keys[$blob]:-}" ] && continue
+	_seen_keys[$blob]=1
+	printf '%s\n' "$line" >> "$AUTHKEYS_PATH"
+	AUTH_COUNT=$((AUTH_COUNT + 1))
+	echo "  authorizing key: $k"
+done
 
 render() {
 	sed \
@@ -113,9 +167,17 @@ fi
 
 docker compose "${COMPOSE_ARGS[@]}" up -d
 
+# Identity File hint: the desktop app needs the *Windows* private key. If we detected one,
+# show it in Windows path form (C:\Users\...); otherwise fall back to the WSL key.
+if [ -n "$WIN_KEY_DETECTED" ] && command -v wslpath >/dev/null 2>&1; then
+	IDENTITY_HINT="$(wslpath -w "${WIN_KEY_DETECTED%.pub}" 2>/dev/null || echo "${WIN_KEY_DETECTED%.pub}")"
+else
+	IDENTITY_HINT="$HOME/.ssh/id_ed25519  (WSL key - for the desktop app, use your Windows %USERPROFILE%\\.ssh key)"
+fi
+
 cat <<EOF
 
-Environment '$ENV_NAME' is up.
+Environment '$ENV_NAME' is up.  ($AUTH_COUNT SSH key(s) authorized)
 
   Container : claude-$ENV_NAME
   Repo      : $REPO_PATH  ->  /workspaces/$ENV_NAME
@@ -127,7 +189,12 @@ Environment '$ENV_NAME' is up.
 Add this SSH connection in the Claude desktop app:
   SSH Host      : node@127.0.0.1
   SSH Port      : $SSH_PORT
-  Identity File : ${PUBKEY%.pub}
+  Identity File : $IDENTITY_HINT
+  Folder        : /workspaces/$ENV_NAME
 
-Recreate later without losing history:  scripts/rebuild.sh $ENV_NAME
+Next steps:
+  1. Enable git inside the container:  scripts/setup-git-auth.sh $ENV_NAME
+  2. First connect (accept fingerprint) from PowerShell:
+       ssh -p $SSH_PORT node@127.0.0.1
+  3. Recreate later without losing history:  scripts/rebuild.sh $ENV_NAME
 EOF
