@@ -81,6 +81,17 @@ if you prefer: `scripts/build.sh claude-dev:1.0`.
 
 ## STEP 3 — spin up an environment per repo
 
+**Fastest path — one command from a URL:**
+
+```bash
+scripts/add-repo.sh https://github.com/you/alpha     # clone + env + git auth + print app values
+scripts/add-repo.sh you/alpha alpha                  # owner/repo shorthand + custom name
+```
+
+`add-repo.sh` clones the repo into `~/code` (or uses a local path), creates the env, enables
+git inside it, and prints the exact desktop-app values. The lower-level steps below are what it
+runs for you:
+
 ```bash
 scripts/new-env.sh --repo /home/you/code/alpha
 scripts/new-env.sh --repo /home/you/code/beta --port 2201
@@ -221,6 +232,7 @@ scripts/
   setup-wsl.sh               one-time: install Docker Engine in WSL, make an SSH key
   doctor.sh                  pre-flight checks (docker, group, ssh key, repo path, firewall)
   build.sh                   build/tag the base image
+  add-repo.sh                one-shot: clone a URL + create env + git auth + print app values
   new-env.sh                 stamp out + start a container for a repo (authorizes WSL + Windows keys)
   setup-git-auth.sh          provision git creds + identity into a container's volume (token via gh/PAT)
   list-envs.sh               show all environments: status, SSH port, firewall, mounted repo

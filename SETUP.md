@@ -70,6 +70,24 @@ scripts/build.sh
 
 ## Part 2 — add a repo (once per repo)
 
+### The easy way: one command
+
+*What & why: `add-repo.sh` does all of Part 2 for you — clone, create the container, enable
+git — then prints exactly what to paste into the app. Pass a URL, an `owner/repo`, or a local
+path (and optionally a name).*
+
+```bash
+scripts/add-repo.sh https://github.com/WiseTechGlobal/WTA.Ramen
+# or:  scripts/add-repo.sh WiseTechGlobal/WTA.Ramen
+# or:  scripts/add-repo.sh WiseTechGlobal/WTA.Ramen ramen     # custom name
+```
+
+When it finishes, jump to **Part 3** with the values it printed. (If the repo is private and
+the clone asks for a password, do the git-credential one-liner in Troubleshooting once, then
+re-run.) Prefer to understand each step? Do them manually below instead.
+
+### The manual way
+
 ### 2.1  Clone the repo into WSL
 *What & why: keep the code on the fast Linux filesystem (`~/code`), not `/mnt/c`. If git asks
 for a password and you have the Windows GitHub CLI, run the one-liner in Troubleshooting first.*
