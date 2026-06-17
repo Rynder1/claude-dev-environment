@@ -64,7 +64,7 @@ if [ -z "$SSH_PORT" ]; then
 	SSH_PORT=2200
 	if compgen -G "$ENVS_DIR/*.compose.yml" >/dev/null 2>&1; then
 		used_max="$(grep -rhoE '127\.0\.0\.1:[0-9]+:22' "$ENVS_DIR"/*.compose.yml \
-			| grep -oE '[0-9]+:22' | cut -d: -f1 | sort -n | tail -1 || true)"
+			| cut -d: -f2 | sort -n | tail -1 || true)"
 		[ -n "$used_max" ] && SSH_PORT=$((used_max + 1))
 	fi
 fi

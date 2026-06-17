@@ -70,7 +70,7 @@ if [ "$HAVE_DOCKER" = "1" ]; then
 fi
 
 # 5. SSH key pair present (for the desktop app to connect)?
-if ls "$HOME"/.ssh/id_ed25519.pub "$HOME"/.ssh/id_rsa.pub >/dev/null 2>&1; then
+if ls "$HOME"/.ssh/id_ed25519.pub >/dev/null 2>&1 || ls "$HOME"/.ssh/id_rsa.pub >/dev/null 2>&1; then
 	ok "SSH public key present in ~/.ssh"
 else
 	warn "no SSH public key in ~/.ssh - run scripts/setup-wsl.sh or 'ssh-keygen -t ed25519'"
