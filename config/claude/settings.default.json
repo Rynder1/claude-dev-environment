@@ -1,0 +1,21 @@
+{
+	"permissions": {
+		"defaultMode": "auto",
+		"ask": [
+			"Bash(git push:*)"
+		],
+		"deny": []
+	},
+	"autoMode": {
+		"environment": [
+			"$defaults"
+		],
+		"soft_deny": [
+			"$defaults"
+		],
+		"hard_deny": [
+			"$defaults",
+			"Never send repository contents, secrets, or environment variables to third-party or external APIs, domains, or endpoints that are not in the trusted environment list"
+		]
+	}
+}

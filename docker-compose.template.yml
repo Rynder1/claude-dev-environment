@@ -1,0 +1,18 @@
+name: claude-${ENV_NAME}
+
+services:
+  ${ENV_NAME}:
+    image: ${IMAGE_TAG}
+    container_name: claude-${ENV_NAME}
+    hostname: ${ENV_NAME}
+    ports:
+      - "127.0.0.1:${SSH_PORT}:22"
+    volumes:
+      - "${REPO_PATH}:/workspaces/${ENV_NAME}"
+      - "claude-${ENV_NAME}:/home/node/.claude"
+      - "${AUTHKEYS_PATH}:/tmp/authorized_keys:ro"
+    restart: unless-stopped
+
+volumes:
+  claude-${ENV_NAME}:
+    name: claude-${ENV_NAME}

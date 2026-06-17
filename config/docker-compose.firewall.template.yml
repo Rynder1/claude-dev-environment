@@ -1,0 +1,7 @@
+services:
+  ${ENV_NAME}:
+    cap_add:
+      - NET_ADMIN
+    environment:
+      ENABLE_FIREWALL: "1"
+      FIREWALL_EXTRA_DOMAINS: ""

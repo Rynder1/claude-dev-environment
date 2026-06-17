@@ -1,0 +1,9 @@
+# Per-environment generated compose files
+envs/
+
+# Secrets - SSH public keys copied per environment, any keys
+secrets/
+*.pem
+*.key
+authorized_keys
+.env

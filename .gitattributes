@@ -1,0 +1,6 @@
+# These run inside Linux containers/WSL - never let Windows checkout rewrite to CRLF
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.conf      text eol=lf
+Dockerfile  text eol=lf
+entrypoint.sh text eol=lf
