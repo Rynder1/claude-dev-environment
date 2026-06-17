@@ -118,5 +118,5 @@ if [ "$FAIL" -gt 0 ]; then
 	echo "Resolve the FAIL items above before running new-env.sh."
 	exit 1
 fi
-echo "Ready. Next: scripts/build.sh (if needed), then scripts/new-env.sh --repo <path>."
+echo "Ready. Next: scripts/build.sh (if needed), then scripts/add-repo.sh <url|owner/repo>."
 exit 0
