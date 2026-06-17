@@ -45,8 +45,18 @@ done
 REPO_PATH="$(cd "$REPO_PATH" && pwd)"
 
 [ -n "$ENV_NAME" ] || ENV_NAME="$(basename "$REPO_PATH")"
-ENV_NAME="$(printf '%s' "$ENV_NAME" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-_')"
-[ -n "$ENV_NAME" ] || { echo "Error: could not derive a valid env name" >&2; exit 1; }
+# Display name: SSH-<RepoName>, capitalization preserved, dots/spaces -> dashes. This is
+# the workspace folder + container name you see in the desktop app, so SSH containers sort
+# together under "SSH-" and never collide with your local (non-SSH) projects.
+ENV_NAME="${ENV_NAME//./-}"
+ENV_NAME="$(printf '%s' "$ENV_NAME" | tr ' ' '-' | tr -cd 'A-Za-z0-9_-')"
+case "$ENV_NAME" in
+	SSH-*|ssh-*) ENV_NAME="SSH-${ENV_NAME#???-}" ;;
+	*) ENV_NAME="SSH-$ENV_NAME" ;;
+esac
+[ -n "$ENV_NAME" ] && [ "$ENV_NAME" != "SSH-" ] || { echo "Error: could not derive a valid env name" >&2; exit 1; }
+# Docker Compose requires the project name to be lowercase; derive it from the display name.
+PROJECT_NAME="$(printf '%s' "$ENV_NAME" | tr '[:upper:]' '[:lower:]')"
 
 mkdir -p "$ENVS_DIR" "$SECRETS_DIR"
 
@@ -75,6 +85,7 @@ chmod 600 "$AUTHKEYS_PATH"
 
 render() {
 	sed \
+		-e "s|\${PROJECT_NAME}|$PROJECT_NAME|g" \
 		-e "s|\${ENV_NAME}|$ENV_NAME|g" \
 		-e "s|\${REPO_PATH}|$REPO_PATH|g" \
 		-e "s|\${SSH_PORT}|$SSH_PORT|g" \
