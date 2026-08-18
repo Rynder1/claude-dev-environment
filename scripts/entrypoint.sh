@@ -38,7 +38,17 @@ chown -h "$SSH_USER":"$SSH_USER" "$USER_HOME/.gitconfig"
 # Optional egress lockdown for unattended runs (opt-in via new-env.sh --firewall).
 if [ "${ENABLE_FIREWALL:-0}" = "1" ]; then
 	if ! /usr/local/bin/init-firewall.sh; then
-		echo "WARNING: firewall init failed - egress is NOT locked down." >&2
+		# init-firewall fails closed internally, but belt-and-braces: if it couldn't even run,
+		# apply a minimal default-deny here so a broken firewall never leaves egress open.
+		echo "WARNING: firewall init failed - applying emergency default-deny (fail-closed)." >&2
+		iptables -A INPUT  -i lo -j ACCEPT 2>/dev/null || true
+		iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+		iptables -A INPUT  -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+		iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+		iptables -A INPUT  -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
+		iptables -P OUTPUT  DROP 2>/dev/null || true
+		iptables -P INPUT   DROP 2>/dev/null || true
+		iptables -P FORWARD DROP 2>/dev/null || true
 	fi
 	# Make the firewall changeable ONLY from the host. The node user (which Claude runs as)
 	# ships with passwordless sudo, so without this it could `sudo iptables -F` and disable

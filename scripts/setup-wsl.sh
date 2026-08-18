@@ -9,7 +9,20 @@ fi
 
 if ! command -v docker >/dev/null 2>&1; then
 	echo "Installing Docker Engine (no Docker Desktop)..."
-	curl -fsSL https://get.docker.com | sh
+	# Download the installer to a file first (never pipe the network straight into sh): a
+	# truncated download can't then execute half a script, and the file can be inspected or
+	# checksum-verified before it runs. get.docker.com changes over time so it isn't pinned
+	# by default - set DOCKER_INSTALL_SHA256 to require an exact match.
+	inst="$(mktemp /tmp/get-docker.XXXXXX.sh)"
+	curl -fsSL https://get.docker.com -o "$inst"
+	if [ -n "${DOCKER_INSTALL_SHA256:-}" ]; then
+		echo "${DOCKER_INSTALL_SHA256}  ${inst}" | sha256sum -c - \
+			|| { echo "Error: get.docker.com checksum mismatch - aborting." >&2; rm -f "$inst"; exit 1; }
+	else
+		echo "  (installer saved at $inst; review it, or set DOCKER_INSTALL_SHA256 to enforce a checksum)"
+	fi
+	sh "$inst"
+	rm -f "$inst"
 else
 	echo "Docker already installed: $(docker --version)"
 fi

@@ -109,13 +109,11 @@ else
 			[ -f "$c" ] && { add_key "$c"; [ -z "$WIN_KEY_DETECTED" ] && WIN_KEY_DETECTED="$c"; }
 		done
 	else
-		# Fallback: scan real Windows user profiles (skip system ones)
-		for d in /mnt/c/Users/*/.ssh; do
-			case "$d" in */Public/.ssh|*/Default/.ssh|*/"Default User"/.ssh|*/"All Users"/.ssh) continue;; esac
-			for c in "$d/id_ed25519.pub" "$d/id_rsa.pub"; do
-				[ -f "$c" ] && { add_key "$c"; [ -z "$WIN_KEY_DETECTED" ] && WIN_KEY_DETECTED="$c"; }
-			done
-		done
+		# Deliberately do NOT scan every /mnt/c/Users/*/.ssh profile: on a shared machine that
+		# could authorize another user's key into your container. If we can't identify YOUR
+		# profile, authorize only the WSL key and tell you to pass the Windows key explicitly.
+		echo "Note: couldn't auto-detect your Windows SSH key. If the desktop app can't connect," >&2
+		echo "      re-run with --win-key /mnt/c/Users/<you>/.ssh/id_ed25519.pub" >&2
 	fi
 fi
 
