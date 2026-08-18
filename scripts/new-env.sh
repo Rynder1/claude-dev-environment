@@ -14,11 +14,14 @@ PUBKEY=""
 WIN_KEY=""
 IMAGE_TAG="claude-dev:latest"
 FIREWALL=0
+FIREWALL_DOMAINS=""
+EXTRA_MOUNTS=()
 
 usage() {
 	cat <<'EOF'
 Usage: new-env.sh --repo <path> [--name <name>] [--port <port>] [--pubkey <path>]
                   [--win-key <path>] [--image <tag>] [--firewall]
+                  [--firewall-domains <csv>] [--mount <host:container[:ro]>]...
 
   --repo     Absolute path (inside WSL) to the repository to mount. Required.
   --name     Environment name (default: basename of --repo).
@@ -28,6 +31,11 @@ Usage: new-env.sh --repo <path> [--name <name>] [--port <port>] [--pubkey <path>
              Windows user profile - this is the key the desktop app connects with).
   --image    Base image tag (default: claude-dev:latest).
   --firewall Lock down egress to an allowlist (opt-in profile for unattended runs).
+  --firewall-domains  Extra domains to add to the egress allowlist (comma/space
+             separated). Only meaningful with --firewall. E.g. proget.internal.example.
+  --mount    Extra bind mount host:container[:ro] (repeatable). The host path is
+             created if absolute and missing. Handy for a scratch/sandbox dir a
+             container can clone other repos into.
 
 By default this authorizes BOTH your WSL key (for `ssh` from inside WSL) and your
 Windows key (what the Claude desktop app presents), so the connection just works.
@@ -43,6 +51,8 @@ while [ $# -gt 0 ]; do
 		--win-key) WIN_KEY="${2:-}"; shift 2;;
 		--image) IMAGE_TAG="${2:-}"; shift 2;;
 		--firewall) FIREWALL=1; shift;;
+		--firewall-domains) FIREWALL_DOMAINS="${2:-}"; shift 2;;
+		--mount) EXTRA_MOUNTS+=("${2:-}"); shift 2;;
 		-h|--help) usage; exit 0;;
 		*) echo "Unknown argument: $1" >&2; usage; exit 1;;
 	esac
@@ -137,6 +147,28 @@ for k in "${PUBKEYS[@]}"; do
 	echo "  authorizing key: $k"
 done
 
+# --- Validate/normalize extra bind mounts ---------------------------------------------
+# Each spec is host:container[:ro]. Host paths never contain ':' on WSL, so split on the
+# first colon. An absolute host path that doesn't exist yet is created (sandbox dirs).
+NORM_MOUNTS=()
+if [ "${#EXTRA_MOUNTS[@]}" -gt 0 ]; then
+	for m in "${EXTRA_MOUNTS[@]}"; do
+		[ -n "$m" ] || continue
+		host="${m%%:*}"; rest="${m#*:}"
+		[ "$host" != "$m" ] || { echo "Error: --mount '$m' must be host:container[:ro]" >&2; exit 1; }
+		case "$host" in
+			/*) [ -e "$host" ] || { echo "  creating mount host dir: $host"; mkdir -p "$host"; }
+			    host="$(cd "$host" && pwd)" ;;
+			*) echo "Error: --mount host path must be absolute: $host" >&2; exit 1 ;;
+		esac
+		NORM_MOUNTS+=("$host:$rest")
+	done
+fi
+
+if [ -n "$FIREWALL_DOMAINS" ] && [ "$FIREWALL" != "1" ]; then
+	echo "Note: --firewall-domains given without --firewall; egress stays open and the list is ignored." >&2
+fi
+
 render() {
 	sed \
 		-e "s|\${PROJECT_NAME}|$PROJECT_NAME|g" \
@@ -145,12 +177,23 @@ render() {
 		-e "s|\${SSH_PORT}|$SSH_PORT|g" \
 		-e "s|\${IMAGE_TAG}|$IMAGE_TAG|g" \
 		-e "s|\${AUTHKEYS_PATH}|$AUTHKEYS_PATH|g" \
+		-e "s|\${FIREWALL_EXTRA_DOMAINS}|$FIREWALL_DOMAINS|g" \
 		"$1"
 }
 
 COMPOSE_FILE="$ENVS_DIR/$ENV_NAME.compose.yml"
 OVERLAY_FILE="$ENVS_DIR/$ENV_NAME.firewall.yml"
-render "$TEMPLATE" > "$COMPOSE_FILE"
+# Render the base compose, expanding the ##EXTRA_VOLUMES## marker into any extra bind mounts
+# (or removing it when there are none). Done in bash so mount paths need no sed escaping.
+render "$TEMPLATE" | while IFS= read -r line; do
+	if [ "$line" = "##EXTRA_VOLUMES##" ]; then
+		if [ "${#NORM_MOUNTS[@]}" -gt 0 ]; then
+			for m in "${NORM_MOUNTS[@]}"; do printf '      - "%s"\n' "$m"; done
+		fi
+	else
+		printf '%s\n' "$line"
+	fi
+done > "$COMPOSE_FILE"
 
 COMPOSE_ARGS=(-f "$COMPOSE_FILE")
 if [ "$FIREWALL" = "1" ]; then
@@ -175,15 +218,25 @@ else
 	IDENTITY_HINT="$HOME/.ssh/id_ed25519  (WSL key - for the desktop app, use your Windows %USERPROFILE%\\.ssh key)"
 fi
 
+MOUNTS_SUMMARY=""
+if [ "${#NORM_MOUNTS[@]}" -gt 0 ]; then
+	for m in "${NORM_MOUNTS[@]}"; do MOUNTS_SUMMARY+=$'\n'"  Mount     : ${m%%:*}  ->  ${m#*:}"; done
+fi
+EGRESS_LINE="open"
+if [ "$FIREWALL" = "1" ]; then
+	EGRESS_LINE="LOCKED (allowlist firewall)"
+	[ -n "$FIREWALL_DOMAINS" ] && EGRESS_LINE+=" + $FIREWALL_DOMAINS"
+fi
+
 cat <<EOF
 
 Environment '$ENV_NAME' is up.  ($AUTH_COUNT SSH key(s) authorized)
 
   Container : claude-$ENV_NAME
-  Repo      : $REPO_PATH  ->  /workspaces/$ENV_NAME
+  Repo      : $REPO_PATH  ->  /workspaces/$ENV_NAME$MOUNTS_SUMMARY
   SSH       : node@127.0.0.1  port $SSH_PORT
   Volume    : claude-$ENV_NAME  (holds /home/node/.claude - sessions + auth)
-  Egress    : $([ "$FIREWALL" = "1" ] && echo "LOCKED (allowlist firewall)" || echo "open")
+  Egress    : $EGRESS_LINE
   Perms     : auto mode + guardrails (seeded on first run into the volume)
 
 Add this SSH connection in the Claude desktop app:

@@ -9,7 +9,10 @@ echo "init-firewall: applying egress allowlist..."
 
 iptables -F
 iptables -X || true
-iptables -t nat -F || true
+# NOTE: do NOT flush the nat table. Docker installs a DNAT rule there that redirects the
+# container's embedded DNS resolver (127.0.0.11:53) to dockerd's DNS server. Flushing nat
+# breaks name resolution entirely - dig returns nothing, the allowlist ipset ends up empty,
+# and every allowlisted domain becomes unreachable. Leave nat intact.
 iptables -t mangle -F || true
 
 ipset destroy allowed-domains 2>/dev/null || true

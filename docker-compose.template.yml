@@ -11,6 +11,7 @@ services:
       - "${REPO_PATH}:/workspaces/${ENV_NAME}"
       - "claude-${ENV_NAME}:/home/node/.claude"
       - "${AUTHKEYS_PATH}:/tmp/authorized_keys:ro"
+##EXTRA_VOLUMES##
     restart: unless-stopped
 
 volumes:
