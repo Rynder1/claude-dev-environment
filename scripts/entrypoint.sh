@@ -40,6 +40,14 @@ if [ "${ENABLE_FIREWALL:-0}" = "1" ]; then
 	if ! /usr/local/bin/init-firewall.sh; then
 		echo "WARNING: firewall init failed - egress is NOT locked down." >&2
 	fi
+	# Make the firewall changeable ONLY from the host. The node user (which Claude runs as)
+	# ships with passwordless sudo, so without this it could `sudo iptables -F` and disable
+	# its own egress firewall - defeating the point. Revoking node's sudo removes its path to
+	# root/NET_ADMIN, so nothing inside the container can alter the rules; only `docker exec`
+	# from the host (scripts/firewall.sh) can. Re-applied on every (re)start. To get a root
+	# shell for maintenance, use the host:  docker exec -u root -it claude-<env> bash
+	rm -f /etc/sudoers.d/node
+	echo "entrypoint: firewall enabled - revoked in-container sudo (host-only control)."
 fi
 
 exec /usr/sbin/sshd -D -e
