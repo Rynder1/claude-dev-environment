@@ -7,3 +7,11 @@ secrets/
 *.key
 authorized_keys
 .env
+
+# Local, site-specific overrides (internal hostnames, machine paths).
+# The committed config/local.env.example is the documented template.
+config/local.env
+
+# Python bytecode cache
+__pycache__/
+*.pyc

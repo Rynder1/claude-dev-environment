@@ -7,6 +7,10 @@ FIREWALL_TEMPLATE="$REPO_ROOT/config/docker-compose.firewall.template.yml"
 ENVS_DIR="$REPO_ROOT/envs"
 SECRETS_DIR="$REPO_ROOT/secrets"
 
+# Optional local, gitignored overrides (internal hostnames, defaults). See
+# config/local.env.example; an absent file just means plain defaults.
+[ -f "$REPO_ROOT/config/local.env" ] && . "$REPO_ROOT/config/local.env"
+
 ENV_NAME=""
 REPO_PATH=""
 SSH_PORT=""
@@ -32,7 +36,8 @@ Usage: new-env.sh --repo <path> [--name <name>] [--port <port>] [--pubkey <path>
   --image    Base image tag (default: claude-dev:latest).
   --firewall Lock down egress to an allowlist (opt-in profile for unattended runs).
   --firewall-domains  Extra domains to add to the egress allowlist (comma/space
-             separated). Only meaningful with --firewall. E.g. proget.internal.example.
+             separated). Only meaningful with --firewall. Defaults to
+             FIREWALL_EXTRA_DOMAINS from config/local.env when unset.
   --mount    Extra bind mount host:container[:ro] (repeatable). The host path is
              created if absolute and missing. Handy for a scratch/sandbox dir a
              container can clone other repos into.
@@ -163,6 +168,12 @@ if [ "${#EXTRA_MOUNTS[@]}" -gt 0 ]; then
 		esac
 		NORM_MOUNTS+=("$host:$rest")
 	done
+fi
+
+# When the firewall is on and no domains were passed, fall back to the configured
+# default allowlist (FIREWALL_EXTRA_DOMAINS from config/local.env).
+if [ "$FIREWALL" = "1" ] && [ -z "$FIREWALL_DOMAINS" ]; then
+	FIREWALL_DOMAINS="${FIREWALL_EXTRA_DOMAINS:-}"
 fi
 
 if [ -n "$FIREWALL_DOMAINS" ] && [ "$FIREWALL" != "1" ]; then

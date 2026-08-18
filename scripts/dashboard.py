@@ -33,8 +33,24 @@ REBUILD_SH = os.path.join(REPO_ROOT, "scripts", "rebuild.sh")
 DOCKER = shutil.which("docker") or "/usr/bin/docker"
 CMDEXE = "/mnt/c/Windows/System32/cmd.exe"
 TOKEN = secrets.token_urlsafe(24)
-DISTRO = "Ubuntu"       # overridden by --distro
+DISTRO = "Ubuntu"       # overridden by --distro / config
 DEF_INTERVAL = 10
+
+
+def load_local_config():
+    """Parse config/local.env (gitignored KEY="value" overrides). Missing file -> {}."""
+    cfg = {}
+    try:
+        with open(os.path.join(REPO_ROOT, "config", "local.env")) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                cfg[k.strip()] = v.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return cfg
 
 
 def run(cmd, timeout=30):
@@ -340,10 +356,16 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     global DISTRO, DEF_INTERVAL
+    cfg = load_local_config()
+    try:
+        cfg_port = int(cfg.get("DASHBOARD_PORT", "8787") or 8787)
+    except ValueError:
+        cfg_port = 8787
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--port", type=int, default=cfg_port)
     ap.add_argument("--interval", type=int, default=10, help="default UI auto-refresh seconds")
-    ap.add_argument("--distro", default="Ubuntu", help="WSL distro for the root-shell button")
+    ap.add_argument("--distro", default=cfg.get("WSL_DISTRO") or "Ubuntu",
+                    help="WSL distro for the root-shell button")
     ap.add_argument("--open", action="store_true", help="open the dashboard in your browser")
     args = ap.parse_args()
     DISTRO, DEF_INTERVAL = args.distro, args.interval
