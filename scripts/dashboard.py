@@ -52,11 +52,15 @@ def docker(*args, timeout=30):
 
 
 def gather():
-    """Return a list of dicts describing every claude-* container."""
-    rc, out, _ = docker("ps", "-a", "--filter", "name=claude-", "--format", "{{.Names}}")
+    """Return (rows, error) describing every claude-* container."""
+    rc, out, err = docker("ps", "-a", "--filter", "name=claude-", "--format", "{{.Names}}")
+    if rc != 0:
+        hint = (" — run the dashboard INSIDE WSL (where Docker runs). There is no docker "
+                "CLI on Windows, so launching it with Windows Python finds no containers.")
+        return [], "docker unavailable: " + ((err or "").strip() or ("exit %d" % rc)) + hint
     names = [n for n in out.split() if n]
     if not names:
-        return []
+        return [], ""
     rc, out, _ = docker("inspect", *names)
     try:
         data = json.loads(out) if out.strip() else []
@@ -112,7 +116,7 @@ def gather():
             extra_domains=extra_domains,
         ))
     rows.sort(key=lambda r: r["env"].lower())
-    return rows
+    return rows, ""
 
 
 def open_root_shell(container):
@@ -125,22 +129,38 @@ def open_root_shell(container):
         return 1, "", "could not launch terminal: %s" % e
 
 
+def cmd_for(action, envname):
+    """Human-readable command a given action runs (kept in sync with the JS tooltip)."""
+    c = "claude-" + envname
+    return {
+        "firewall_on":  "scripts/firewall.sh %s on" % envname,
+        "firewall_off": "scripts/firewall.sh %s off" % envname,
+        "start":        "docker start %s" % c,
+        "stop":         "docker stop %s" % c,
+        "restart":      "docker restart %s" % c,
+        "rebuild":      "scripts/rebuild.sh %s" % envname,
+        "root_shell":   "docker exec -u root -it %s bash   (new terminal)" % c,
+    }.get(action, action)
+
+
 def do_action(action, env):
+    """Return (rc, out, err, cmd) - cmd is the command that was run, for display."""
     envname = re.sub(r"^claude-", "", env or "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", envname or ""):
-        return 1, "", "invalid environment name"
+        return 1, "", "invalid environment name", ""
     container = "claude-" + envname
+    cmd = cmd_for(action, envname)
     if action == "firewall_on":
-        return run(["bash", FIREWALL_SH, envname, "on"])
+        return (*run(["bash", FIREWALL_SH, envname, "on"]), cmd)
     if action == "firewall_off":
-        return run(["bash", FIREWALL_SH, envname, "off"])
+        return (*run(["bash", FIREWALL_SH, envname, "off"]), cmd)
     if action in ("start", "stop", "restart"):
-        return docker(action, container, timeout=60)
+        return (*docker(action, container, timeout=60), cmd)
     if action == "rebuild":
-        return run(["bash", REBUILD_SH, envname], timeout=240)
+        return (*run(["bash", REBUILD_SH, envname], timeout=240), cmd)
     if action == "root_shell":
-        return open_root_shell(container)
-    return 1, "", "unknown action: %s" % action
+        return (*open_root_shell(container), cmd)
+    return 1, "", "unknown action: %s" % action, ""
 
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -176,6 +196,7 @@ tr:hover td{background:#131820}
 #log{margin-top:14px;background:#0b0e12;border:1px solid #222a33;border-radius:8px;padding:10px 12px;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#b8c2cc;white-space:pre-wrap;max-height:180px;overflow:auto}
 .err{color:#e98aa0}
 .ok{color:#5fd58a}
+.cmd{color:#6cb6ff}
 a{color:#6cb6ff}
 </style></head><body>
 <header>
@@ -212,29 +233,42 @@ function fwCell(r){
   if(r.fw_state==="stopped") return '<span class="badge b-na">on@boot</span>';
   return '<span class="badge b-na">?</span>';
 }
+function cmdFor(a,env){ const c="claude-"+env; switch(a){
+  case "firewall_on": return "scripts/firewall.sh "+env+" on";
+  case "firewall_off": return "scripts/firewall.sh "+env+" off";
+  case "start": return "docker start "+c;
+  case "stop": return "docker stop "+c;
+  case "restart": return "docker restart "+c;
+  case "rebuild": return "scripts/rebuild.sh "+env;
+  case "root_shell": return "docker exec -u root -it "+c+" bash";
+} return a; }
+function ab(cls,action,env,label){ return `<button class="${cls}" title="${esc(cmdFor(action,env))}" onclick="act('${action}','${env}')">${label}</button>`; }
 function actions(r){
   const run=r.status==="running"; let h='<div class="acts">';
-  if(run){ h+=`<button class="r" onclick="act('stop','${r.env}')">stop</button>`;
-           h+=`<button onclick="act('restart','${r.env}')">restart</button>`; }
-  else   { h+=`<button class="g" onclick="act('start','${r.env}')">start</button>`; }
+  if(run){ h+=ab('r','stop',r.env,'stop'); h+=ab('','restart',r.env,'restart'); }
+  else     h+=ab('g','start',r.env,'start');
   if(r.fw_enabled && run){
-    if(r.fw_state==="on")  h+=`<button class="a" onclick="act('firewall_off','${r.env}')">fw off</button>`;
-    if(r.fw_state==="off") h+=`<button class="g" onclick="act('firewall_on','${r.env}')">fw on</button>`;
+    if(r.fw_state==="on")  h+=ab('a','firewall_off',r.env,'fw off');
+    if(r.fw_state==="off") h+=ab('g','firewall_on',r.env,'fw on');
   }
-  if(run) h+=`<button onclick="act('root_shell','${r.env}')">root shell</button>`;
-  h+=`<button onclick="copySsh(${esc(JSON.stringify(JSON.stringify(r))).replace(/'/g,"&#39;")})">copy ssh</button>`;
-  h+=`<button class="r" onclick="if(confirm('Rebuild ${r.env}? Container is recreated; volume/sessions kept.'))act('rebuild','${r.env}')">rebuild</button>`;
+  if(run) h+=ab('','root_shell',r.env,'root shell');
+  h+=`<button title="copy SSH connect details" onclick="copySsh(${esc(JSON.stringify(JSON.stringify(r))).replace(/'/g,"&#39;")})">copy ssh</button>`;
+  h+=`<button class="r" title="${esc(cmdFor('rebuild',r.env))}" onclick="if(confirm('Rebuild ${r.env}? Container is recreated; volume/sessions kept.'))act('rebuild','${r.env}')">rebuild</button>`;
   return h+'</div>';
 }
 function copySsh(js){ let r; try{r=JSON.parse(js);}catch(e){return;}
   const s=`SSH Host: node@127.0.0.1\nSSH Port: ${r.port}\nFolder: ${r.folder}`;
   navigator.clipboard.writeText(s).then(()=>log("copied SSH details for "+r.env,"ok"),()=>log("clipboard blocked","err")); }
-async function act(action,env){ try{ log(`${action} ${env}…`); const j=await api("/api/action",
+async function act(action,env){ try{ log("$ "+cmdFor(action,env),"cmd"); const j=await api("/api/action",
     {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,env})});
-    log((j.output||"done").trim()+(j.error?("  "+j.error):""), j.rc===0?"ok":"err"); }
+    if(j.output&&j.output.trim()) log(j.output.trim(), j.rc===0?"ok":"err");
+    if(j.error&&j.error.trim()) log(j.error.trim(),"err"); }
   catch(e){ log("action failed: "+e.message,"err"); } finally{ setTimeout(refresh,600); } }
-async function refresh(){ try{ const rows=await api("/api/status");
-    document.getElementById("conn").className="badge b-on"; document.getElementById("conn").textContent="live";
+async function refresh(){ try{ const data=await api("/api/status");
+    const rows=Array.isArray(data)?data:(data.rows||[]); const derr=(data&&data.error)||"";
+    const conn=document.getElementById("conn");
+    if(derr){ conn.className="badge b-off"; conn.textContent="docker error"; log(derr,"err"); }
+    else { conn.className="badge b-on"; conn.textContent="live"; }
     const tb=document.getElementById("rows"); tb.innerHTML = rows.map(r=>{
       const sb = r.status==="running"?"b-run":(r.status==="exited"?"b-stop":"b-other");
       return `<tr><td><b>${esc(r.env)}</b><div class="dim mono">${esc(r.name)}</div></td>
@@ -284,7 +318,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             if not self._token_ok():
                 return self._send(403, json.dumps({"error": "bad token"}))
-            return self._send(200, json.dumps(gather()))
+            rows, err = gather()
+            return self._send(200, json.dumps({"rows": rows, "error": err}))
         return self._send(404, "not found")
 
     def do_POST(self):
@@ -299,8 +334,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(n) or b"{}")
         except Exception:  # noqa
             return self._send(400, json.dumps({"error": "bad json"}))
-        rc, out, err = do_action(payload.get("action", ""), payload.get("env", ""))
-        return self._send(200, json.dumps({"rc": rc, "output": out, "error": err}))
+        rc, out, err, cmd = do_action(payload.get("action", ""), payload.get("env", ""))
+        return self._send(200, json.dumps({"rc": rc, "output": out, "error": err, "cmd": cmd}))
 
 
 def main():
@@ -312,6 +347,16 @@ def main():
     ap.add_argument("--open", action="store_true", help="open the dashboard in your browser")
     args = ap.parse_args()
     DISTRO, DEF_INTERVAL = args.distro, args.interval
+    if os.name == "nt":
+        print("!! You are running this with WINDOWS Python. Docker (and your containers) live")
+        print("!! inside WSL, so the dashboard will see nothing. Run it INSIDE WSL instead, e.g.:")
+        print('!!   wsl -d %s -e python3 %s/scripts/dashboard.py --open' % (args.distro, REPO_ROOT))
+        print("!! Or double-click scripts/dashboard.cmd.\n")
+    else:
+        rc, _, err = docker("version", "--format", "{{.Server.Version}}", timeout=10)
+        if rc != 0:
+            print("!! WARNING: cannot reach the Docker daemon (%s). The page will show an error."
+                  % ((err or "").strip() or "exit %d" % rc))
     url = "http://127.0.0.1:%d/" % args.port
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print("=" * 60)
