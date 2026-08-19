@@ -15,3 +15,8 @@ config/local.env
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Claude Code local scratch (git worktrees, session state). Nothing here is meant
+# to be committed; without this, tools like GitHub Desktop walk into the nested
+# worktree checkouts and report every file in them as an untracked change.
+.claude/
