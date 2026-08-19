@@ -35,6 +35,23 @@ ln -sfn "$GITCONFIG_VOL" "$USER_HOME/.gitconfig"
 chown "$SSH_USER":"$SSH_USER" "$GITCONFIG_VOL"
 chown -h "$SSH_USER":"$SSH_USER" "$USER_HOME/.gitconfig"
 
+# Persist SSH host keys on the volume so the container's fingerprint stays STABLE
+# across image rebuilds. Host keys are otherwise baked into the image (ssh-keygen -A
+# at build time), so every image rebuild rotates them - and SSH clients then reject
+# the connection ("REMOTE HOST IDENTIFICATION HAS CHANGED" / "verification failed"),
+# forcing a manual re-accept. Storing them under ~/.claude means the fingerprint is
+# established once and reused forever, no matter how often the image is rebuilt.
+HOSTKEY_DIR="$USER_HOME/.claude/ssh-hostkeys"
+mkdir -p "$HOSTKEY_DIR"
+if compgen -G "$HOSTKEY_DIR/ssh_host_*_key" >/dev/null; then
+	cp -a "$HOSTKEY_DIR"/ssh_host_* /etc/ssh/         # reuse the persisted keys
+else
+	cp -a /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub "$HOSTKEY_DIR"/  # first run: adopt + persist
+fi
+chown root:root /etc/ssh/ssh_host_* 2>/dev/null || true
+chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || true
+chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+
 # Optional egress lockdown for unattended runs (opt-in via new-env.sh --firewall).
 if [ "${ENABLE_FIREWALL:-0}" = "1" ]; then
 	if ! /usr/local/bin/init-firewall.sh; then
