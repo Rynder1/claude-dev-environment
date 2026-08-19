@@ -5,10 +5,12 @@ Local web dashboard for the claude-dev containers.
   python3 scripts/dashboard.py            # serve on http://127.0.0.1:8787
   python3 scripts/dashboard.py --port 9000 --interval 5 --open
 
-It wraps `docker` and the repo's own scripts (firewall.sh, rebuild.sh), so it stays
-consistent with the CLI. Features:
+It wraps `docker` and the repo's own scripts (firewall.sh, rebuild.sh, build.sh), so it
+stays consistent with the CLI. Features:
   * live table (auto-refresh, default 10s, changeable in the UI): status, SSH port,
     repo, uptime, firewall state + allowlist
+  * header "build image" button: rebuilds claude-dev:latest so new/rebuilt containers
+    pick up Dockerfile changes (per-container rebuild then applies it to that container)
   * per-container buttons: start / stop / restart / rebuild, firewall on / off,
     "root shell" (opens a Windows terminal already `docker exec -u root -it` in),
     and copy-SSH-details
@@ -30,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIREWALL_SH = os.path.join(REPO_ROOT, "scripts", "firewall.sh")
 REBUILD_SH = os.path.join(REPO_ROOT, "scripts", "rebuild.sh")
+BUILD_SH = os.path.join(REPO_ROOT, "scripts", "build.sh")
 DOCKER = shutil.which("docker") or "/usr/bin/docker"
 CMDEXE = "/mnt/c/Windows/System32/cmd.exe"
 TOKEN = secrets.token_urlsafe(24)
@@ -149,6 +152,7 @@ def cmd_for(action, envname):
     """Human-readable command a given action runs (kept in sync with the JS tooltip)."""
     c = "claude-" + envname
     return {
+        "build_image":  "scripts/build.sh",
         "firewall_on":  "scripts/firewall.sh %s on" % envname,
         "firewall_off": "scripts/firewall.sh %s off" % envname,
         "start":        "docker start %s" % c,
@@ -161,6 +165,10 @@ def cmd_for(action, envname):
 
 def do_action(action, env):
     """Return (rc, out, err, cmd) - cmd is the command that was run, for display."""
+    # Rebuild the base image. Global (no env); recreating containers to pick it up is a
+    # separate per-container "rebuild". Generous timeout - a from-scratch build is slow.
+    if action == "build_image":
+        return (*run(["bash", BUILD_SH], timeout=1800), cmd_for(action, ""))
     envname = re.sub(r"^claude-", "", env or "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", envname or ""):
         return 1, "", "invalid environment name", ""
@@ -219,6 +227,7 @@ a{color:#6cb6ff}
   <h1>claude-dev control</h1>
   <span class="badge b-na" id="conn">connecting…</span>
   <div class="spacer"></div>
+  <button class="a" title="scripts/build.sh — rebuild claude-dev:latest so new containers (and rebuilt ones) pick up Dockerfile changes" onclick="buildImage()">build image</button>
   <label class="ctl"><input type="checkbox" id="auto" checked> auto</label>
   <label class="ctl">every <input type="number" id="ivl" min="2" max="600" value="__INTERVAL__"> s</label>
   <button onclick="refresh()">↻ refresh</button>
@@ -250,6 +259,7 @@ function fwCell(r){
   return '<span class="badge b-na">?</span>';
 }
 function cmdFor(a,env){ const c="claude-"+env; switch(a){
+  case "build_image": return "scripts/build.sh";
   case "firewall_on": return "scripts/firewall.sh "+env+" on";
   case "firewall_off": return "scripts/firewall.sh "+env+" off";
   case "start": return "docker start "+c;
@@ -275,6 +285,12 @@ function actions(r){
 function copySsh(js){ let r; try{r=JSON.parse(js);}catch(e){return;}
   const s=`SSH Host: node@127.0.0.1\nSSH Port: ${r.port}\nFolder: ${r.folder}`;
   navigator.clipboard.writeText(s).then(()=>log("copied SSH details for "+r.env,"ok"),()=>log("clipboard blocked","err")); }
+async function buildImage(){
+  if(!confirm("Rebuild the base image (claude-dev:latest)? This can take a few minutes. "+
+              "Existing containers keep running the old image until you rebuild each one."))return;
+  log("building base image — this can take a few minutes, please wait…","cmd");
+  await act("build_image","");
+}
 async function act(action,env){ try{ log("$ "+cmdFor(action,env),"cmd"); const j=await api("/api/action",
     {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,env})});
     if(j.output&&j.output.trim()) log(j.output.trim(), j.rc===0?"ok":"err");
