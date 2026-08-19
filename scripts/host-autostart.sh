@@ -4,6 +4,8 @@
 # open an Ubuntu terminal first. Safe to run repeatedly / by hand.
 set -uo pipefail
 
+echo "=== host-autostart: $(date '+%Y-%m-%d %H:%M:%S%z') ==="
+
 # systemd starts dockerd on boot, but give the daemon a moment to come up.
 for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
 

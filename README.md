@@ -145,6 +145,30 @@ scripts/list-envs.sh
 Lists every environment with its status, SSH port, firewall state, and mounted repo — handy
 for remembering which port maps to which repo when adding connections in the desktop app.
 
+## Start everything at logon
+
+So you never have to open an Ubuntu terminal first, wire the containers to start when you log
+into Windows:
+
+```bash
+scripts/install-autostart.sh              # install (idempotent) — repeat = re-install
+scripts/install-autostart.sh --status     # is it installed?
+scripts/install-autostart.sh --uninstall  # turn it off
+```
+
+It drops a hidden launcher into your Windows **Startup** folder that, at each logon, wakes the
+WSL distro, waits for Docker, and runs `host-autostart.sh` (which `docker start`s every
+`claude-*` container — a no-op for ones already running under `unless-stopped`). No admin
+rights and no console window; output is appended to `~/.local/state/claude-dev/autostart.log`.
+
+Notes:
+- The launcher hard-codes the repo path, distro, and user resolved at install time. If you
+  **move the repo** or change `WSL_DISTRO` in `config/local.env`, just re-run the installer.
+- On machines where policy blocks Windows Script Host (`.vbs`), use `--cmd` for a `.cmd`
+  launcher instead (it briefly flashes a console at logon).
+- Run it from your **canonical checkout**, not a throwaway git worktree, so the baked path
+  stays valid.
+
 ## Recreate without losing anything
 
 ```bash
@@ -237,6 +261,8 @@ scripts/
   setup-git-auth.sh          provision git creds + identity into a container's volume (token via gh/PAT)
   list-envs.sh               show all environments: status, SSH port, firewall, mounted repo
   rebuild.sh                 force-recreate one container, keep its volume (+ firewall overlay)
+  host-autostart.sh          start every claude-* container (run at logon via the launcher below)
+  install-autostart.sh       install/remove the hidden Windows Startup launcher (logon auto-start)
   entrypoint.sh              seeds settings, installs authorized_keys, runs firewall, runs sshd
   init-firewall.sh           egress allowlist (runs only when ENABLE_FIREWALL=1)
 envs/        (gitignored)    generated per-env compose + firewall overlay files

@@ -66,6 +66,27 @@ scripts/doctor.sh          # fix anything marked [FAIL] before continuing
 scripts/build.sh
 ```
 
+### 1.5  Start everything automatically at logon (optional)
+*What & why: so you don't have to open a terminal first. This drops a hidden launcher into your
+Windows Startup folder; at every logon it wakes WSL, waits for Docker, and starts every
+`claude-*` container. No admin rights, no console window.*
+
+```bash
+scripts/install-autostart.sh
+```
+
+Test it without rebooting by running `scripts/host-autostart.sh` (starting already-running
+containers is a harmless no-op). Manage it with:
+
+```bash
+scripts/install-autostart.sh --status      # is it installed?
+scripts/install-autostart.sh --uninstall    # turn it off
+scripts/install-autostart.sh --cmd           # if company policy blocks Windows Script Host
+                                             #   (uses a .cmd launcher; flashes a console briefly)
+```
+
+Logs land in `~/.local/state/claude-dev/autostart.log`.
+
 ---
 
 ## Part 2 — add a repo (once per repo)
